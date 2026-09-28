@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AlertIQ - Hemodialysis Triage Command</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0B0F19; color: #E2E8F0; font-family: 'Segoe UI', system-ui, sans-serif; }
+        .card { background-color: #111827; border: 1px solid #1F2937; border-radius: 12px; }
+        .glow-red { box-shadow: 0 0 20px rgba(239, 68, 68, 0.3); border-color: #EF4444; }
+        .glow-yellow { box-shadow: 0 0 20px rgba(245, 158, 11, 0.3); border-color: #F59E0B; }
+        .glow-green { border-color: #10B981; }
+        
+        /* Smooth sorting transitions */
+        .patient-list-item { transition: transform 0.4s ease, opacity 0.4s ease; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col p-6">
+
+    <!-- Header -->
+    <header class="flex justify-between items-center mb-6 border-b border-gray-800 pb-4">
+        <div>
+            <h1 class="text-4xl font-extrabold text-white tracking-tight">AlertIQ <span class="text-indigo-500">Dialysis Triage</span></h1>
+            <p class="text-gray-400 text-sm mt-1">AI-Driven Prioritization for Hemodialysis Units</p>
+        </div>
+        <div class="flex gap-3">
+            <button onclick="triggerScenario('stable')" class="bg-gray-800 hover:bg-gray-700 text-green-400 font-bold py-2 px-4 rounded text-sm">🟢 Reset All Stable</button>
+            <button onclick="triggerScenario('hypotension')" class="bg-gray-800 hover:bg-gray-700 text-red-400 font-bold py-2 px-4 rounded text-sm">🔴 Trigger Hypotension Crash (Bed 3)</button>
+        </div>
+    </header>
+
+    <div class="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1">
+        
+        <!-- Left Column: Auto-Sorting Triage Queue -->
+        <div class="xl:col-span-1 card p-4 flex flex-col h-full">
+            <h2 class="text-gray-400 uppercase tracking-wider text-sm font-bold mb-4 border-b border-gray-800 pb-2">Live Triage Queue</h2>
+            <div id="patientQueue" class="flex flex-col gap-3 overflow-y-auto">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Right Column: Active Patient Deep Dive -->
+        <div class="xl:col-span-3 flex flex-col gap-6">
+            
+            <!-- Dynamic AI Banner -->
+            <div id="activeBanner" class="card glow-green p-6 flex justify-between items-center transition-all duration-500">
+                <div>
+                    <h2 class="text-gray-400 uppercase tracking-widest text-xs font-bold">Focus Patient</h2>
+                    <h3 id="focusName" class="text-4xl font-extrabold text-white mt-1">Select a patient</h3>
+                </div>
+                <div class="text-right">
+                    <h2 class="text-gray-400 uppercase tracking-widest text-xs font-bold">AI Clinical Assessment</h2>
+                    <p id="focusAiText" class="text-xl font-bold text-green-400 mt-1">Awaiting selection...</p>
+                </div>
+            </div>
+
+            <!-- Dialysis Vitals Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Blood Pressure (Critical for Dialysis) -->
+                <div class="card p-6 flex flex-col justify-center items-center">
+                    <h3 class="text-gray-400 text-sm uppercase tracking-wider font-bold">Blood Pressure</h3>
+                    <div class="flex items-baseline mt-4">
+                        <span id="val_sys" class="text-6xl font-bold text-white">--</span>
+                        <span class="text-3xl text-gray-500 mx-1">/</span>
+                        <span id="val_dia" class="text-4xl font-bold text-gray-300">--</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-4">Baseline: <span id="base_bp" class="text-gray-400">120/80</span></p>
+                </div>
+
+                <!-- Heart Rate & O2 -->
+                <div class="card p-6 flex flex-col justify-center items-center">
+                    <h3 class="text-gray-400 text-sm uppercase tracking-wider font-bold">HR & SpO2</h3>
+                    <div class="flex items-baseline mt-4 gap-6">
+                        <div class="text-center">
+                            <span id="val_hr" class="text-5xl font-bold text-white">--</span>
+                            <span class="block text-xs text-gray-500 mt-1">BPM</span>
+                        </div>
+                        <div class="text-center">
+                            <span id="val_spo2" class="text-5xl font-bold text-white">--</span>
+                            <span class="block text-xs text-gray-500 mt-1">%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dialysis Machine Metrics -->
+                <div class="card p-6 flex flex-col justify-center items-center">
+                    <h3 class="text-gray-400 text-sm uppercase tracking-wider font-bold">Dialysis Metrics</h3>
+                    <div class="w-full mt-4 space-y-4">
+                        <div class="flex justify-between items-center border-b border-gray-800 pb-2">
+                            <span class="text-sm text-gray-400">Ultrafiltration Rate (UFR)</span>
+                            <span id="val_ufr" class="text-xl font-bold text-white">800 ml/hr</span>
+                        </div>
+                        <div class="flex justify-between items-center border-b border-gray-800 pb-2">
+                            <span class="text-sm text-gray-400">Relative Blood Volume (RBV)</span>
+                            <span id="val_rbv" class="text-xl font-bold text-white">-5.2 %</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initial Patient State
+        let patients = [
+            { id: 1, bed: "BED-01", name: "Robert Chen", sys: 125, dia: 82, hr: 72, spo2: 98, ufr: 800, rbv: -4.5, score: 0 },
+            { id: 2, bed: "BED-02", name: "Maria Garcia", sys: 118, dia: 78, hr: 68, spo2: 99, ufr: 600, rbv: -3.2, score: 0 },
+            { id: 3, bed: "BED-03", name: "James Wilson", sys: 130, dia: 85, hr: 75, spo2: 97, ufr: 900, rbv: -5.0, score: 0 },
+            { id: 4, bed: "BED-04", name: "Sarah Smith", sys: 110, dia: 70, hr: 82, spo2: 96, ufr: 750, rbv: -6.1, score: 0 },
+            { id: 5, bed: "BED-05", name: "David Kim", sys: 135, dia: 88, hr: 65, spo2: 98, ufr: 500, rbv: -2.5, score: 0 }
+        ];
+
+        let activePatientId = 1;
+
+        function addNoise(val, maxChange) {
+            return Math.max(0, val + (Math.random() * maxChange * 2 - maxChange));
+        }
+
+        function updateVitals() {
+            patients = patients.map(p => {
+                // Simulate natural vital fluctuations
+                let newSys = addNoise(p.sys, 2);
+                let newDia = addNoise(p.dia, 1);
+                let newHr = addNoise(p.hr, 1.5);
+                let newRbv = addNoise(p.rbv, 0.1);
+
+                // AI Risk Scoring Engine
+                let riskScore = 0;
+                
+                // Intradialytic Hypotension (IDH) Risk
+                if (newSys < 90) riskScore += 80;
+                else if (newSys < 100) riskScore += 40;
+                
+                // Tachycardia compensation for BP drop
+                if (newHr > 100) riskScore += 30;
+                
+                // Dangerous Blood Volume depletion
+                if (newRbv < -12.0) riskScore += 50;
+
+                return { ...p, sys: newSys, dia: newDia, hr: newHr, rbv: newRbv, score: riskScore };
+            });
+
+            // Sort array so highest risk patient is at the top (Priority Triage)
+            patients.sort((a, b) => b.score - a.score);
+
+            renderQueue();
+            updateActiveView();
+        }
+
+        function renderQueue() {
+            const queueDiv = document.getElementById('patientQueue');
+            queueDiv.innerHTML = '';
+
+            patients.forEach(p => {
+                let statusColor = "border-green-500/30 text-green-400";
+                let statusBg = "bg-green-500/10";
+                if (p.score > 60) { statusColor = "border-red-500 text-red-500"; statusBg = "bg-red-500/20"; }
+                else if (p.score > 30) { statusColor = "border-yellow-500 text-yellow-500"; statusBg = "bg-yellow-500/20"; }
+
+                const isSelected = p.id === activePatientId ? "ring-2 ring-indigo-500" : "";
+
+                const el = document.createElement('div');
+                el.className = `p-3 rounded-lg border ${statusColor} ${statusBg} ${isSelected} cursor-pointer hover:bg-gray-800 transition-all patient-list-item`;
+                el.onclick = () => { activePatientId = p.id; updateActiveView(); };
+                
+                el.innerHTML = `
+                    <div class="flex justify-between items-center">
+                        <span class="font-bold">${p.bed}</span>
+                        <span class="text-xs font-bold uppercase py-1 px-2 rounded-full border ${statusColor}">Score: ${Math.round(p.score)}</span>
+                    </div>
+                    <div class="text-sm text-gray-300 mt-1">${p.name}</div>
+                    <div class="flex gap-3 text-xs mt-2 text-gray-400">
+                        <span>BP: ${Math.round(p.sys)}/${Math.round(p.dia)}</span>
+                        <span>HR: ${Math.round(p.hr)}</span>
+                    </div>
+                `;
+                queueDiv.appendChild(el);
+            });
+        }
+
+        function updateActiveView() {
+            const active = patients.find(p => p.id === activePatientId);
+            if (!active) return;
+
+            document.getElementById('focusName').innerText = `${active.bed} - ${active.name}`;
+            document.getElementById('val_sys').innerText = Math.round(active.sys);
+            document.getElementById('val_dia').innerText = Math.round(active.dia);
+            document.getElementById('val_hr').innerText = Math.round(active.hr);
+            document.getElementById('val_spo2').innerText = Math.round(active.spo2);
+            document.getElementById('val_ufr').innerText = `${active.ufr} ml/hr`;
+            document.getElementById('val_rbv').innerText = `${active.rbv.toFixed(1)} %`;
+
+            const banner = document.getElementById('activeBanner');
+            const aiText = document.getElementById('focusAiText');
+            
+            banner.className = 'card p-6 flex justify-between items-center transition-all duration-500 ';
+            
+            if (active.score > 60) {
+                banner.classList.add('glow-red');
+                aiText.className = 'text-xl font-bold text-red-400 mt-1';
+                aiText.innerText = "CRITICAL: Intradialytic Hypotension detected. Stop Ultrafiltration and position patient Trendelenburg.";
+            } else if (active.score > 30) {
+                banner.classList.add('glow-yellow');
+                aiText.className = 'text-xl font-bold text-yellow-400 mt-1';
+                aiText.innerText = "WARNING: Blood Volume depleting rapidly. Reduce UFR to prevent BP crash.";
+            } else {
+                banner.classList.add('glow-green');
+                aiText.className = 'text-xl font-bold text-green-400 mt-1';
+                aiText.innerText = "STABLE: Vitals and fluid removal rate are within target therapeutic ranges.";
+            }
+        }
+
+        window.triggerScenario = function(type) {
+            if (type === 'hypotension') {
+                const target = patients.find(p => p.id === 3);
+                if(target) {
+                    target.sys = 82; 
+                    target.dia = 50; 
+                    target.hr = 115; 
+                    target.rbv = -14.5;
+                }
+            } else if (type === 'stable') {
+                patients.forEach(p => {
+                    p.sys = 120 + Math.random()*10;
+                    p.dia = 80 + Math.random()*5;
+                    p.hr = 70 + Math.random()*10;
+                    p.rbv = -4.0;
+                });
+            }
+            updateVitals();
+        }
+
+        // Run simulation loop
+        setInterval(updateVitals, 1500);
+        updateVitals();
+    </script>
+</body>
+</html>
